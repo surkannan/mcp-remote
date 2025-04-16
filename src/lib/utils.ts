@@ -1,5 +1,6 @@
 import { OAuthClientProvider, UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { OAuthCallbackServerOptions } from './types'
 import express from 'express'
@@ -79,7 +80,7 @@ export async function connectToRemoteServer(
   headers: Record<string, string>,
   waitForAuthCode: () => Promise<string>,
   skipBrowserAuth: boolean = false,
-): Promise<SSEClientTransport> {
+): Promise<Transport> {
   log(`[${pid}] Connecting to remote server: ${serverUrl}`)
   const url = new URL(serverUrl)
 
@@ -93,18 +94,23 @@ export async function connectToRemoteServer(
             ...(init?.headers as Record<string, string> | undefined),
             ...headers,
             ...(tokens?.access_token ? { Authorization: `Bearer ${tokens.access_token}` } : {}),
-            Accept: "text/event-stream",
+            Accept: 'text/event-stream',
           } as Record<string, string>,
-        })
-      );
+        }),
+      )
     },
-  };
+  }
 
-  const transport = new SSEClientTransport(url, {
-    authProvider,
-    requestInit: { headers },
-    eventSourceInit,
-  })
+  const TESTING_NEW_TRANSPORT = true
+  const transport = TESTING_NEW_TRANSPORT
+    ? new StreamableHTTPClientTransport(url, {
+        sessionId: crypto.randomUUID(),
+      })
+    : new SSEClientTransport(url, {
+        authProvider,
+        requestInit: { headers },
+        eventSourceInit,
+      })
 
   try {
     await transport.start()
@@ -126,6 +132,7 @@ export async function connectToRemoteServer(
         await transport.finishAuth(code)
 
         // Create a new transport after auth
+        // TODO: this needs to be the same transport type as the originals
         const newTransport = new SSEClientTransport(url, { authProvider, requestInit: { headers } })
         await newTransport.start()
         log('Connected to remote server after authentication')
