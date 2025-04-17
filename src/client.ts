@@ -22,7 +22,7 @@ import {
   connectToRemoteServer,
   TransportStrategy,
 } from './lib/utils'
-import { coordinateAuth } from './lib/coordination'
+import { createLazyAuthCoordinator } from './lib/coordination'
 
 /**
  * Main function to run the client
@@ -39,8 +39,8 @@ async function runClient(
   // Get the server URL hash for lockfile operations
   const serverUrlHash = getServerUrlHash(serverUrl)
 
-  // Coordinate authentication with other instances
-  const { server, waitForAuthCode, skipBrowserAuth } = await coordinateAuth(serverUrlHash, callbackPort, events)
+  // Create a lazy auth coordinator
+  const authCoordinator = createLazyAuthCoordinator(serverUrlHash, callbackPort, events)
 
   // Create the OAuth client provider
   const authProvider = new NodeOAuthClientProvider({
@@ -48,14 +48,6 @@ async function runClient(
     callbackPort,
     clientName: 'MCP CLI Client',
   })
-
-  // If auth was completed by another instance, just log that we'll use the auth from disk
-  if (skipBrowserAuth) {
-    log('Authentication was completed by another instance - will use tokens from disk...')
-    // TODO: remove, the callback is happening before the tokens are exchanged
-    //  so we're slightly too early
-    await new Promise((res) => setTimeout(res, 1_000))
-  }
 
   // Create the client
   const client = new Client(
@@ -68,15 +60,38 @@ async function runClient(
     },
   )
 
+  // Keep track of the server instance for cleanup
+  let server: any = null
+
+  // Define an auth initializer function
+  const authInitializer = async () => {
+    const authState = await authCoordinator.initializeAuth()
+    
+    // Store server in outer scope for cleanup
+    server = authState.server
+    
+    // If auth was completed by another instance, just log that we'll use the auth from disk
+    if (authState.skipBrowserAuth) {
+      log('Authentication was completed by another instance - will use tokens from disk...')
+      // TODO: remove, the callback is happening before the tokens are exchanged
+      //  so we're slightly too early
+      await new Promise((res) => setTimeout(res, 1_000))
+    }
+    
+    return { 
+      waitForAuthCode: authState.waitForAuthCode, 
+      skipBrowserAuth: authState.skipBrowserAuth 
+    }
+  }
+  
   try {
-    // Connect to remote server with authentication
+    // Connect to remote server with lazy authentication
     const transport = await connectToRemoteServer(
       client,
       serverUrl,
       authProvider,
       headers,
-      waitForAuthCode,
-      skipBrowserAuth,
+      authInitializer,
       transportStrategy,
     )
 
@@ -98,7 +113,10 @@ async function runClient(
     const cleanup = async () => {
       log('\nClosing connection...')
       await client.close()
-      server.close()
+      // If auth was initialized and server was created, close it
+      if (server) {
+        server.close()
+      }
     }
     setupSignalHandlers(cleanup)
 
@@ -124,11 +142,17 @@ async function runClient(
 
     // log('Listening for messages. Press Ctrl+C to exit.')
     log('Exiting OK...')
-    server.close()
+    // Only close the server if it was initialized
+    if (server) {
+      server.close()
+    }
     process.exit(0)
   } catch (error) {
     log('Fatal error:', error)
-    server.close()
+    // Only close the server if it was initialized
+    if (server) {
+      server.close()
+    }
     process.exit(1)
   }
 }

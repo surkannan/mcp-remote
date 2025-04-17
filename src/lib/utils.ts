@@ -74,13 +74,20 @@ export function mcpProxy({ transportToClient, transportToServer }: { transportTo
 }
 
 /**
+ * Type for the auth initialization function
+ */
+export type AuthInitializer = () => Promise<{
+  waitForAuthCode: () => Promise<string>
+  skipBrowserAuth: boolean
+}>
+
+/**
  * Creates and connects to a remote server with OAuth authentication
  * @param client The client to connect with
  * @param serverUrl The URL of the remote server
  * @param authProvider The OAuth client provider
  * @param headers Additional headers to send with the request
- * @param waitForAuthCode Function to wait for the auth code
- * @param skipBrowserAuth Whether to skip browser auth and use shared auth
+ * @param authInitializer Function to initialize authentication when needed
  * @param transportStrategy Strategy for selecting transport type ('sse-only', 'http-only', 'sse-first', 'http-first')
  * @param recursionReasons Set of reasons for recursive calls (internal use)
  * @returns The connected transport
@@ -90,8 +97,7 @@ export async function connectToRemoteServer(
   serverUrl: string,
   authProvider: OAuthClientProvider,
   headers: Record<string, string>,
-  waitForAuthCode: () => Promise<string>,
-  skipBrowserAuth: boolean = false,
+  authInitializer: AuthInitializer,
   transportStrategy: TransportStrategy = 'http-first',
   recursionReasons: Set<string> = new Set(),
 ): Promise<Transport> {
@@ -143,7 +149,6 @@ export async function connectToRemoteServer(
 
     return transport
   } catch (error) {
-    console.log('DID I CATCH OR WHAT?')
     // Check if it's a protocol error and we should attempt fallback
     if (
       error instanceof Error &&
@@ -172,12 +177,16 @@ export async function connectToRemoteServer(
         serverUrl,
         authProvider,
         headers,
-        waitForAuthCode,
-        skipBrowserAuth,
+        authInitializer,
         sseTransport ? 'http-only' : 'sse-only',
         recursionReasons,
       )
     } else if (error instanceof UnauthorizedError || (error instanceof Error && error.message.includes('Unauthorized'))) {
+      log('Authentication required. Initializing auth...')
+      
+      // Initialize authentication on-demand
+      const { waitForAuthCode, skipBrowserAuth } = await authInitializer()
+      
       if (skipBrowserAuth) {
         log('Authentication required but skipping browser auth - using shared auth')
       } else {
@@ -207,8 +216,7 @@ export async function connectToRemoteServer(
           serverUrl,
           authProvider,
           headers,
-          waitForAuthCode,
-          skipBrowserAuth,
+          authInitializer,
           transportStrategy,
           recursionReasons,
         )
