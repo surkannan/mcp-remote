@@ -70,7 +70,15 @@ async function runClient(
 
   try {
     // Connect to remote server with authentication
-    const transport = await connectToRemoteServer(serverUrl, authProvider, headers, waitForAuthCode, skipBrowserAuth, transportStrategy)
+    const transport = await connectToRemoteServer(
+      client,
+      serverUrl,
+      authProvider,
+      headers,
+      waitForAuthCode,
+      skipBrowserAuth,
+      transportStrategy,
+    )
 
     // Set up message and error handlers
     transport.onmessage = (message) => {
@@ -94,9 +102,6 @@ async function runClient(
     }
     setupSignalHandlers(cleanup)
 
-    // Connect the client
-    log('Connecting client...')
-    await client.connect(transport)
     log('Connected successfully!')
 
     try {
@@ -117,7 +122,10 @@ async function runClient(
       log('Error requesting resources list:', e)
     }
 
-    log('Listening for messages. Press Ctrl+C to exit.')
+    // log('Listening for messages. Press Ctrl+C to exit.')
+    log('Exiting OK...')
+    server.close()
+    process.exit(0)
   } catch (error) {
     log('Fatal error:', error)
     server.close()

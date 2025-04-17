@@ -11,9 +11,18 @@
 
 import { EventEmitter } from 'events'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { connectToRemoteServer, log, mcpProxy, parseCommandLineArgs, setupSignalHandlers, getServerUrlHash } from './lib/utils'
+import {
+  connectToRemoteServer,
+  log,
+  mcpProxy,
+  parseCommandLineArgs,
+  setupSignalHandlers,
+  getServerUrlHash,
+  MCP_REMOTE_VERSION,
+} from './lib/utils'
 import { NodeOAuthClientProvider } from './lib/node-oauth-client-provider'
 import { coordinateAuth } from './lib/coordination'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
 /**
  * Main function to run the proxy
@@ -47,8 +56,17 @@ async function runProxy(serverUrl: string, callbackPort: number, headers: Record
   const localTransport = new StdioServerTransport()
 
   try {
+    const client = new Client(
+      {
+        name: 'mcp-remote',
+        version: MCP_REMOTE_VERSION,
+      },
+      {
+        capabilities: {},
+      },
+    )
     // Connect to remote server with authentication
-    const remoteTransport = await connectToRemoteServer(serverUrl, authProvider, headers, waitForAuthCode, skipBrowserAuth)
+    const remoteTransport = await connectToRemoteServer(client, serverUrl, authProvider, headers, waitForAuthCode, skipBrowserAuth)
 
     // Set up bidirectional proxy between local and remote transports
     mcpProxy({
