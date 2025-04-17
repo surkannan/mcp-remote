@@ -143,10 +143,6 @@ export async function connectToRemoteServer(
     await client.connect(transport)
     log(`Connected to remote server using ${transport.constructor.name}`)
 
-    if (!sseTransport) {
-      console.log({ serverCapabilities: await client.getServerCapabilities() })
-    }
-
     return transport
   } catch (error) {
     // Check if it's a protocol error and we should attempt fallback
@@ -183,10 +179,10 @@ export async function connectToRemoteServer(
       )
     } else if (error instanceof UnauthorizedError || (error instanceof Error && error.message.includes('Unauthorized'))) {
       log('Authentication required. Initializing auth...')
-      
+
       // Initialize authentication on-demand
       const { waitForAuthCode, skipBrowserAuth } = await authInitializer()
-      
+
       if (skipBrowserAuth) {
         log('Authentication required but skipping browser auth - using shared auth')
       } else {
@@ -211,15 +207,7 @@ export async function connectToRemoteServer(
         log(`Recursively reconnecting for reason: ${REASON_AUTH_NEEDED}`)
 
         // Recursively call connectToRemoteServer with the updated recursion tracking
-        return connectToRemoteServer(
-          client,
-          serverUrl,
-          authProvider,
-          headers,
-          authInitializer,
-          transportStrategy,
-          recursionReasons,
-        )
+        return connectToRemoteServer(client, serverUrl, authProvider, headers, authInitializer, transportStrategy, recursionReasons)
       } catch (authError) {
         log('Authorization error:', authError)
         throw authError
