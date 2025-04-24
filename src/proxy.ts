@@ -23,12 +23,16 @@ import {
 } from './lib/utils'
 import { NodeOAuthClientProvider } from './lib/node-oauth-client-provider'
 import { createLazyAuthCoordinator } from './lib/coordination'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
 /**
  * Main function to run the proxy
  */
-async function runProxy(serverUrl: string, callbackPort: number, headers: Record<string, string>, transportStrategy: TransportStrategy = 'http-first') {
+async function runProxy(
+  serverUrl: string,
+  callbackPort: number,
+  headers: Record<string, string>,
+  transportStrategy: TransportStrategy = 'sse-first',
+) {
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
@@ -54,10 +58,10 @@ async function runProxy(serverUrl: string, callbackPort: number, headers: Record
   // Define an auth initializer function
   const authInitializer = async () => {
     const authState = await authCoordinator.initializeAuth()
-    
+
     // Store server in outer scope for cleanup
     server = authState.server
-    
+
     // If auth was completed by another instance, just log that we'll use the auth from disk
     if (authState.skipBrowserAuth) {
       log('Authentication was completed by another instance - will use tokens from disk')
@@ -65,25 +69,16 @@ async function runProxy(serverUrl: string, callbackPort: number, headers: Record
       //  so we're slightly too early
       await new Promise((res) => setTimeout(res, 1_000))
     }
-    
-    return { 
-      waitForAuthCode: authState.waitForAuthCode, 
-      skipBrowserAuth: authState.skipBrowserAuth 
+
+    return {
+      waitForAuthCode: authState.waitForAuthCode,
+      skipBrowserAuth: authState.skipBrowserAuth,
     }
   }
 
   try {
-    const client = new Client(
-      {
-        name: 'mcp-remote',
-        version: MCP_REMOTE_VERSION,
-      },
-      {
-        capabilities: {},
-      },
-    )
     // Connect to remote server with lazy authentication
-    const remoteTransport = await connectToRemoteServer(client, serverUrl, authProvider, headers, authInitializer, transportStrategy)
+    const remoteTransport = await connectToRemoteServer(null, serverUrl, authProvider, headers, authInitializer, transportStrategy)
 
     // Set up bidirectional proxy between local and remote transports
     mcpProxy({
@@ -94,7 +89,7 @@ async function runProxy(serverUrl: string, callbackPort: number, headers: Record
     // Start the local STDIO server
     await localTransport.start()
     log('Local STDIO server running')
-    log('Proxy established successfully between local STDIO and remote SSE')
+    log(`Proxy established successfully between local STDIO and remote ${remoteTransport.constructor.name}`)
     log('Press Ctrl+C to exit')
 
     // Setup cleanup handler

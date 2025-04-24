@@ -31,7 +31,7 @@ async function runClient(
   serverUrl: string,
   callbackPort: number,
   headers: Record<string, string>,
-  transportStrategy: TransportStrategy = 'http-first',
+  transportStrategy: TransportStrategy = 'sse-first',
 ) {
   // Set up event emitter for auth flow
   const events = new EventEmitter()
@@ -66,10 +66,10 @@ async function runClient(
   // Define an auth initializer function
   const authInitializer = async () => {
     const authState = await authCoordinator.initializeAuth()
-    
+
     // Store server in outer scope for cleanup
     server = authState.server
-    
+
     // If auth was completed by another instance, just log that we'll use the auth from disk
     if (authState.skipBrowserAuth) {
       log('Authentication was completed by another instance - will use tokens from disk...')
@@ -77,23 +77,16 @@ async function runClient(
       //  so we're slightly too early
       await new Promise((res) => setTimeout(res, 1_000))
     }
-    
-    return { 
-      waitForAuthCode: authState.waitForAuthCode, 
-      skipBrowserAuth: authState.skipBrowserAuth 
+
+    return {
+      waitForAuthCode: authState.waitForAuthCode,
+      skipBrowserAuth: authState.skipBrowserAuth,
     }
   }
-  
+
   try {
     // Connect to remote server with lazy authentication
-    const transport = await connectToRemoteServer(
-      client,
-      serverUrl,
-      authProvider,
-      headers,
-      authInitializer,
-      transportStrategy,
-    )
+    const transport = await connectToRemoteServer(client, serverUrl, authProvider, headers, authInitializer, transportStrategy)
 
     // Set up message and error handlers
     transport.onmessage = (message) => {

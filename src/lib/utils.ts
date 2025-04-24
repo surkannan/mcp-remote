@@ -93,12 +93,12 @@ export type AuthInitializer = () => Promise<{
  * @returns The connected transport
  */
 export async function connectToRemoteServer(
-  client: Client,
+  client: Client | null,
   serverUrl: string,
   authProvider: OAuthClientProvider,
   headers: Record<string, string>,
   authInitializer: AuthInitializer,
-  transportStrategy: TransportStrategy = 'http-first',
+  transportStrategy: TransportStrategy = 'sse-first',
   recursionReasons: Set<string> = new Set(),
 ): Promise<Transport> {
   log(`[${pid}] Connecting to remote server: ${serverUrl}`)
@@ -140,7 +140,11 @@ export async function connectToRemoteServer(
       })
 
   try {
-    await client.connect(transport)
+    if (client) {
+      await client.connect(transport)
+    } else {
+      await transport.start()
+    }
     log(`Connected to remote server using ${transport.constructor.name}`)
 
     return transport
@@ -380,7 +384,7 @@ export async function parseCommandLineArgs(args: string[], defaultPort: number, 
   const allowHttp = args.includes('--allow-http')
 
   // Parse transport strategy
-  let transportStrategy: TransportStrategy = 'http-first' // Default
+  let transportStrategy: TransportStrategy = 'sse-first' // Default
   const transportIndex = args.indexOf('--transport')
   if (transportIndex !== -1 && transportIndex < args.length - 1) {
     const strategy = args[transportIndex + 1]
