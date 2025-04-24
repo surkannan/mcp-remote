@@ -32,7 +32,7 @@
     "open": "^10.1.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "link:/Users/glen/src/hax/mcp/typescript-sdk",
+    "@modelcontextprotocol/sdk": "^1.10.2",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.12",
