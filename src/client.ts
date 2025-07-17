@@ -24,6 +24,7 @@ import {
 } from './lib/utils'
 import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
 import { createLazyAuthCoordinator } from './lib/coordination'
+import { installHttpLogger } from './lib/http-logger'
 
 /**
  * Main function to run the client
@@ -37,6 +38,9 @@ async function runClient(
   staticOAuthClientMetadata: StaticOAuthClientMetadata,
   staticOAuthClientInfo: StaticOAuthClientInformationFull,
 ) {
+  // Install HTTP logger if DEBUG is enabled
+  installHttpLogger()
+  
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
