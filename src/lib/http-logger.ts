@@ -124,34 +124,34 @@ export function installHttpLogger(): void {
     const fixedUrl = fixOAuthUrl(originalUrl)
     const actualInput = fixedUrl !== originalUrl ? fixedUrl : input
     
-    // Log special details for OAuth-related requests (headers, etc.)
-    if (originalUrl.includes('oauth') || originalUrl.includes('.well-known') || originalUrl.includes('authorize') || 
-        originalUrl.includes('token') || originalUrl.includes('register')) {
-      
-      // Log request headers if present
-      if (init?.headers) {
-        try {
-          // Different ways headers might be represented
-          let headersObj: Record<string, string> = {}
-          
-          if (init.headers instanceof Headers) {
-            init.headers.forEach((value, key) => {
-              // Don't log sensitive authorization headers
-              if (key.toLowerCase() !== 'authorization') {
-                headersObj[key] = value
-              }
-            })
-          } else if (typeof init.headers === 'object') {
-            headersObj = {...init.headers as Record<string, string>}
-            // Remove sensitive headers
-            delete headersObj['authorization']
-            delete headersObj['Authorization']
-          }
-          
-          log(`[OAuth-Headers] ${JSON.stringify(headersObj)}`)
-        } catch (e) {
-          // If there's any error parsing headers, just skip it
-          log('[OAuth-Headers] Could not log headers')
+    // Log request headers for all requests (with special handling for OAuth)
+    if (init?.headers) {
+      try {
+        // Different ways headers might be represented
+        let headersObj: Record<string, string> = {}
+        
+        if (init.headers instanceof Headers) {
+          init.headers.forEach((value, key) => {
+            // Don't log sensitive authorization headers in full
+            if (key.toLowerCase() === 'authorization') {
+              headersObj[key] = '[REDACTED]'
+            } else {
+              headersObj[key] = value
+            }
+          })
+        } else if (typeof init.headers === 'object') {
+          headersObj = {...init.headers as Record<string, string>}
+          // Redact sensitive headers
+          if (headersObj['authorization']) headersObj['authorization'] = '[REDACTED]'
+          if (headersObj['Authorization']) headersObj['Authorization'] = '[REDACTED]'
+        }
+        
+        if (Object.keys(headersObj).length > 0) {
+          log(`[Request-Headers] ${JSON.stringify(headersObj)}`)
+        }
+      } catch (error) {
+        if (DEBUG) {
+          log(`[Request-Headers] Error parsing headers: ${error}`)
         }
       }
     }
@@ -160,13 +160,60 @@ export function installHttpLogger(): void {
       // Log the actual URL being hit right before making the request
       log(`[HTTP-Request] ${init?.method || 'GET'} ${fixedUrl}`)
       
+      // Log OAuth scope information if present in the URL
+      if (fixedUrl.includes('scope=') || fixedUrl.includes('authorize') || fixedUrl.includes('token')) {
+        try {
+          const url = new URL(fixedUrl)
+          const scope = url.searchParams.get('scope')
+          if (scope) {
+            log(`[OAuth-Scopes] Requesting scopes: ${scope}`)
+          }
+          
+          // Also check for other OAuth parameters of interest
+          const responseType = url.searchParams.get('response_type')
+          const clientId = url.searchParams.get('client_id')
+          const redirectUri = url.searchParams.get('redirect_uri')
+          
+          if (responseType || clientId || redirectUri) {
+            const oauthParams: Record<string, string> = {}
+            if (responseType) oauthParams.response_type = responseType
+            if (clientId) oauthParams.client_id = clientId
+            if (redirectUri) oauthParams.redirect_uri = redirectUri
+            log(`[OAuth-Params] ${JSON.stringify(oauthParams)}`)
+          }
+        } catch (urlError) {
+          // If URL parsing fails, just continue
+          if (DEBUG) {
+            log(`[OAuth-Scopes] Error parsing URL for scope: ${urlError}`)
+          }
+        }
+      }
+      
       // Call original fetch with the potentially fixed URL
       const response = await originalFetch(actualInput, init)
       
-      // Log response immediately after request for OAuth-related requests
-      if (originalUrl.includes('oauth') || originalUrl.includes('.well-known') || originalUrl.includes('authorize') || 
-          originalUrl.includes('token') || originalUrl.includes('register')) {
-        log(`[OAuth-Response] Status: ${response.status} ${response.statusText}`)
+      // Log response status and headers
+      log(`[Response-Status] ${response.status} ${response.statusText}`)
+      
+      // Log response headers
+      try {
+        const responseHeaders: Record<string, string> = {}
+        response.headers.forEach((value, key) => {
+          // Don't log sensitive headers in full
+          if (key.toLowerCase() === 'set-cookie' || key.toLowerCase() === 'authorization') {
+            responseHeaders[key] = '[REDACTED]'
+          } else {
+            responseHeaders[key] = value
+          }
+        })
+        
+        if (Object.keys(responseHeaders).length > 0) {
+          log(`[Response-Headers] ${JSON.stringify(responseHeaders)}`)
+        }
+      } catch (error) {
+        if (DEBUG) {
+          log(`[Response-Headers] Error parsing headers: ${error}`)
+        }
       }
       
       return response
