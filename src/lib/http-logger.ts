@@ -2,13 +2,109 @@
  * Simple HTTP request logger for MCP-remote
  * 
  * Intercepts the global fetch function to log all HTTP requests,
- * with special attention to OAuth-related URLs
+ * with special attention to OAuth-related URLs, and fixes malformed
+ * OAuth discovery URLs that strip server paths
  */
 
 import { log, DEBUG } from './utils'
 
 // Store original fetch function
 const originalFetch = global.fetch
+
+// Store the original server URL to fix OAuth endpoint construction
+let originalServerUrl: string | null = null
+
+/**
+ * Sets the original server URL for OAuth endpoint fixing
+ */
+export function setOriginalServerUrl(serverUrl: string): void {
+  originalServerUrl = serverUrl
+  if (DEBUG) {
+    log(`[HTTP-Logger] Set original server URL: ${serverUrl}`)
+  }
+}
+
+/**
+ * Fixes malformed OAuth discovery URLs by preserving the server path
+ */
+function fixOAuthUrl(url: string): string {
+  if (!originalServerUrl) return url
+  
+  try {
+    const originalUrl = new URL(originalServerUrl)
+    const requestUrl = new URL(url)
+    
+    // Check if this is a malformed OAuth discovery URL for same domain
+    if (requestUrl.origin === originalUrl.origin && 
+        (url.includes('/.well-known/oauth-') || url.includes('/.well-known/openid-configuration'))) {
+      
+      // Extract the well-known path from the request
+      const wellKnownMatch = url.match(/\/(\.well-known\/[^?#]*)/)
+      if (wellKnownMatch) {
+        const wellKnownPath = wellKnownMatch[1]
+        
+        // Construct the correct URL with the server path preserved
+        const fixedUrl = `${originalUrl.origin}${originalUrl.pathname}${wellKnownPath}${requestUrl.search}`
+        
+        if (fixedUrl !== url) {
+          log(`[OAuth-URL-Fix] Fixed malformed URL:`)
+          log(`[OAuth-URL-Fix]   Original: ${url}`)
+          log(`[OAuth-URL-Fix]   Fixed:    ${fixedUrl}`)
+          return fixedUrl
+        }
+      }
+    }
+    
+    // Fix cross-domain authorization server URLs (e.g., Okta)
+    // Pattern: https://domain/.well-known/oauth-authorization-server/path/to/auth/server
+    // Should be: https://domain/path/to/auth/server/.well-known/oauth-authorization-server
+    if (url.includes('/.well-known/oauth-authorization-server/')) {
+      const authServerMatch = url.match(/^(https?:\/\/[^/]+)\/\.well-known\/oauth-authorization-server\/(.+)$/)
+      if (authServerMatch) {
+        const [, domain, authServerPath] = authServerMatch
+        const fixedUrl = `${domain}/${authServerPath}/.well-known/oauth-authorization-server`
+        
+        if (fixedUrl !== url) {
+          log(`[OAuth-URL-Fix] Fixed cross-domain authorization server URL:`)
+          log(`[OAuth-URL-Fix]   Original: ${url}`)
+          log(`[OAuth-URL-Fix]   Fixed:    ${fixedUrl}`)
+          return fixedUrl
+        }
+      }
+    }
+    
+    // Fix cross-domain registration endpoints
+    // The registration endpoint should be derived from the authorization server metadata
+    // For now, we'll try to detect and fix common patterns
+    if (url.includes('/oauth2/v1/clients') && !originalServerUrl) {
+      // This is likely a registration endpoint from OAuth metadata
+      // The URL should already be correct from the metadata, so we don't need to fix it
+      // But we can log it for debugging
+      if (DEBUG) {
+        log(`[OAuth-URL-Fix] Registration endpoint detected: ${url}`)
+      }
+    }
+    
+    // Also fix same-domain registration URLs that go to root instead of server path
+    if (requestUrl.origin === originalUrl.origin && url.endsWith('/register')) {
+      const fixedUrl = `${originalUrl.origin}${originalUrl.pathname}register${requestUrl.search}`
+      if (fixedUrl !== url) {
+        log(`[OAuth-URL-Fix] Fixed same-domain registration URL:`)
+        log(`[OAuth-URL-Fix]   Original: ${url}`)
+        log(`[OAuth-URL-Fix]   Fixed:    ${fixedUrl}`)
+        return fixedUrl
+      }
+    }
+    
+  } catch (error) {
+    // If URL parsing fails, return original URL
+    if (DEBUG) {
+      log(`[OAuth-URL-Fix] Error parsing URLs: ${error}`)
+    }
+  }
+  
+  return url
+}
 
 /**
  * Installs the HTTP request logger
@@ -22,15 +118,15 @@ export function installHttpLogger(): void {
   // Override global fetch with our logging version
   global.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     // Convert input to string for logging
-    const url = input.toString()
+    const originalUrl = input.toString()
     
-    // Log all requests
-    log(`[HTTP-Request] ${init?.method || 'GET'} ${url}`)
+    // Fix OAuth URLs if needed (this will log the fix details)
+    const fixedUrl = fixOAuthUrl(originalUrl)
+    const actualInput = fixedUrl !== originalUrl ? fixedUrl : input
     
-    // Log special details for OAuth-related requests
-    if (url.includes('oauth') || url.includes('.well-known') || url.includes('authorize') || 
-        url.includes('token') || url.includes('register')) {
-      log(`[OAuth-URL] ${url}`)
+    // Log special details for OAuth-related requests (headers, etc.)
+    if (originalUrl.includes('oauth') || originalUrl.includes('.well-known') || originalUrl.includes('authorize') || 
+        originalUrl.includes('token') || originalUrl.includes('register')) {
       
       // Log request headers if present
       if (init?.headers) {
@@ -61,13 +157,15 @@ export function installHttpLogger(): void {
     }
     
     try {
-      // Call original fetch
-      const response = await originalFetch(input, init)
+      // Log the actual URL being hit right before making the request
+      log(`[HTTP-Request] ${init?.method || 'GET'} ${fixedUrl}`)
       
-      // Clone the response so we can read the status while preserving the original
-      // Only log status for OAuth-related requests to reduce noise
-      if (url.includes('oauth') || url.includes('.well-known') || url.includes('authorize') || 
-          url.includes('token') || url.includes('register')) {
+      // Call original fetch with the potentially fixed URL
+      const response = await originalFetch(actualInput, init)
+      
+      // Log response immediately after request for OAuth-related requests
+      if (originalUrl.includes('oauth') || originalUrl.includes('.well-known') || originalUrl.includes('authorize') || 
+          originalUrl.includes('token') || originalUrl.includes('register')) {
         log(`[OAuth-Response] Status: ${response.status} ${response.statusText}`)
       }
       

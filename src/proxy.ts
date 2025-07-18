@@ -23,7 +23,7 @@ import {
 import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
 import { NodeOAuthClientProvider } from './lib/node-oauth-client-provider'
 import { createLazyAuthCoordinator } from './lib/coordination'
-import { installHttpLogger } from './lib/http-logger'
+import { installHttpLogger, setOriginalServerUrl } from './lib/http-logger'
 
 /**
  * Main function to run the proxy
@@ -40,6 +40,9 @@ async function runProxy(
 ) {
   // Install HTTP logger if DEBUG is enabled
   installHttpLogger()
+  
+  // Set the original server URL for OAuth URL fixing
+  setOriginalServerUrl(serverUrl)
   
   // Set up event emitter for auth flow
   const events = new EventEmitter()
