@@ -24,7 +24,7 @@ import {
 } from './lib/utils'
 import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
 import { createLazyAuthCoordinator } from './lib/coordination'
-import { installHttpLogger, setOriginalServerUrl } from './lib/http-logger'
+import { installHttpLogger, installOAuthUrlFixer, setOriginalServerUrl } from './lib/http-logger'
 
 /**
  * Main function to run the client
@@ -38,12 +38,15 @@ async function runClient(
   staticOAuthClientMetadata: StaticOAuthClientMetadata,
   staticOAuthClientInfo: StaticOAuthClientInformationFull,
 ) {
-  // Install HTTP logger if DEBUG is enabled
-  installHttpLogger()
-  
   // Set the original server URL for OAuth URL fixing
   setOriginalServerUrl(serverUrl)
-  
+
+  // Always install OAuth URL fixer
+  installOAuthUrlFixer()
+
+  // Install HTTP logger if DEBUG is enabled
+  installHttpLogger()
+
   // Set up event emitter for auth flow
   const events = new EventEmitter()
 
