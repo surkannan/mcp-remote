@@ -34,6 +34,24 @@ function fixOAuthUrl(url: string): string {
     const originalUrl = new URL(originalServerUrl)
     const requestUrl = new URL(url)
 
+    // Fix URLs with double .well-known/oauth-authorization-server (common SDK bug)
+    if (url.includes('/.well-known/oauth-authorization-server/') && url.endsWith('/.well-known/oauth-authorization-server')) {
+      // Pattern: https://domain/.well-known/oauth-authorization-server/path/to/server/.well-known/oauth-authorization-server
+      // Should be: https://domain/path/to/server/.well-known/oauth-authorization-server
+      const doubleWellKnownMatch = url.match(
+        /^(https?:\/\/[^/]+)\/\.well-known\/oauth-authorization-server\/(.+)\/\.well-known\/oauth-authorization-server$/,
+      )
+      if (doubleWellKnownMatch) {
+        const [, domain, serverPath] = doubleWellKnownMatch
+        const fixedUrl = `${domain}/${serverPath}/.well-known/oauth-authorization-server`
+
+        log(`[OAuth-URL-Fix] Fixed double well-known URL:`)
+        log(`[OAuth-URL-Fix]   Original: ${url}`)
+        log(`[OAuth-URL-Fix]   Fixed:    ${fixedUrl}`)
+        return fixedUrl
+      }
+    }
+
     // Check if this is a malformed OAuth discovery URL for same domain
     if (
       requestUrl.origin === originalUrl.origin &&
@@ -44,8 +62,22 @@ function fixOAuthUrl(url: string): string {
       if (wellKnownMatch) {
         const wellKnownPath = wellKnownMatch[1]
 
-        // Construct the correct URL with the server path preserved
-        const fixedUrl = `${originalUrl.origin}${originalUrl.pathname}${wellKnownPath}${requestUrl.search}`
+        // Construct the correct URL with .well-known at gateway level (one level above /mcp/)
+        // For a server at /calc/mcp, OAuth endpoints should be at /calc/ (gateway routing path)
+
+        // Start with the original server path
+        let serverPath = originalUrl.pathname
+
+        // Remove trailing slash if present
+        if (serverPath.endsWith('/')) {
+          serverPath = serverPath.slice(0, -1)
+        }
+
+        // Find the last slash and remove everything after it to get gateway path
+        const lastSlashIndex = serverPath.lastIndexOf('/')
+        const gatewayPath = lastSlashIndex > 0 ? serverPath.substring(0, lastSlashIndex) : ''
+
+        const fixedUrl = `${originalUrl.origin}${gatewayPath}/${wellKnownPath}${requestUrl.search}`
 
         if (fixedUrl !== url) {
           log(`[OAuth-URL-Fix] Fixed malformed URL:`)
@@ -59,11 +91,19 @@ function fixOAuthUrl(url: string): string {
     // Fix cross-domain authorization server URLs (e.g., Okta)
     // Pattern: https://domain/.well-known/oauth-authorization-server/path/to/auth/server
     // Should be: https://domain/path/to/auth/server/.well-known/oauth-authorization-server
-    if (url.includes('/.well-known/oauth-authorization-server/')) {
+    // But for gateway routing, we need to go one level up from the MCP server path
+    // Skip URLs that already end with .well-known/oauth-authorization-server (likely malformed/double-encoded)
+    if (url.includes('/.well-known/oauth-authorization-server/') && !url.endsWith('/.well-known/oauth-authorization-server')) {
       const authServerMatch = url.match(/^(https?:\/\/[^/]+)\/\.well-known\/oauth-authorization-server\/(.+)$/)
       if (authServerMatch) {
         const [, domain, authServerPath] = authServerMatch
-        const fixedUrl = `${domain}/${authServerPath}/.well-known/oauth-authorization-server`
+        // For gateway routing, remove the last path segment (typically /mcp) to get gateway path
+        // authServerPath is like "calc/mcp", we want "calc"
+        const lastSlashIndex = authServerPath.lastIndexOf('/')
+        const gatewayPath = lastSlashIndex > 0 ? authServerPath.substring(0, lastSlashIndex) : authServerPath.split('/')[0] || ''
+        const fixedUrl = gatewayPath
+          ? `${domain}/${gatewayPath}/.well-known/oauth-authorization-server`
+          : `${domain}/.well-known/oauth-authorization-server`
 
         if (fixedUrl !== url) {
           log(`[OAuth-URL-Fix] Fixed cross-domain authorization server URL:`)
