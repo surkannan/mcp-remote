@@ -74,7 +74,7 @@ The codebase includes built-in debugging capabilities:
 
 ### HTTP Logger
 
-A dedicated HTTP logger (in `lib/http-logger.ts`) has been implemented to trace OAuth URL construction issues:
+A dedicated HTTP interceptor (in `lib/http-interceptor.ts`) has been implemented to trace OAuth URL construction issues:
 
 ```typescript
 // Enable debug mode with the --debug flag

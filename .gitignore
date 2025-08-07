@@ -4,3 +4,5 @@ node_modules
 dist
 t.*
 cacert.pem
+log
+package-lock.json

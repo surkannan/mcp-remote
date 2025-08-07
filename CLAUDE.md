@@ -28,7 +28,7 @@ This is a TypeScript ESM library that provides a remote proxy for the Model Cont
   - `mcp-auth-config.ts` - Configuration management for OAuth credentials and tokens
   - `utils.ts` - Core bidirectional proxy implementation (`mcpProxy` function)
   - `types.ts` - TypeScript interfaces for OAuth provider options and callback server setup
-  - `http-logger.ts` - HTTP request logging for debugging OAuth flows
+  - `http-interceptor.ts` - HTTP request interception and logging for debugging OAuth flows
 
 ### Architecture Patterns
 

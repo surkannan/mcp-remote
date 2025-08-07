@@ -278,6 +278,85 @@ this might look like:
 * For bash on WSL:<br/>`tail -n 20 -f "C:\Users\YourUsername\AppData\Local\Claude\Logs\mcp.log"`
 * Powershell: <br/>`Get-Content "C:\Users\YourUsername\AppData\Local\Claude\Logs\mcp.log" -Wait -Tail 20`
 
+## HTTP Interceptor Hook System
+
+`mcp-remote` includes a flexible hook system for intercepting and modifying HTTP requests, particularly useful for handling OAuth URL issues and custom authentication flows.
+
+### Overview
+
+The hook system allows you to:
+- **Request Hooks**: Modify URLs before they are sent (e.g., fix malformed OAuth discovery URLs)
+- **Response Hooks**: Process responses for logging or custom handling
+
+### Built-in Hooks
+
+By default, `mcp-remote` includes:
+
+1. **OAuth URL Fixer** (`defaultOAuthUrlFixer`): Automatically fixes common OAuth URL issues:
+   - Double `.well-known/oauth-authorization-server` patterns
+   - Missing server paths in OAuth discovery URLs
+   - Cross-domain authorization server URL corrections
+   - Same-domain registration endpoint fixes
+
+2. **Response Logger** (`defaultResponseLogger`): Logs HTTP requests/responses in debug mode, including OAuth-specific parameters like scopes and client information.
+
+### Custom Hook Development
+
+For advanced use cases, you can implement custom hooks:
+
+```typescript
+import { registerRequestHook, registerResponseHook, type HttpRequestContext } from './lib/http-interceptor.js'
+
+// Custom URL fixing hook
+function myOAuthFixer(context: HttpRequestContext): string | null {
+  const { url, originalServerUrl, isOAuthRelated } = context
+  
+  if (isOAuthRelated && url.includes('my-broken-pattern')) {
+    return url.replace('my-broken-pattern', 'my-fixed-pattern')
+  }
+  
+  return null // No changes needed
+}
+
+// Register your hook
+registerRequestHook(myOAuthFixer)
+```
+
+### Hook API
+
+**Request Hook**: `(context: HttpRequestContext) => string | null`
+- Return modified URL string to change the request
+- Return `null` for no changes
+- Context includes: `url`, `method`, `headers`, `originalServerUrl`, `isOAuthRelated`
+
+**Response Hook**: `(context: HttpResponseContext) => void`
+- Process responses for logging or custom handling
+- Context includes all request context plus: `response`, `status`, `statusText`, `responseHeaders`
+
+### Hook Management
+
+```typescript
+import { registerRequestHook, registerResponseHook, clearHooks } from './lib/http-interceptor.js'
+
+// Register hooks
+registerRequestHook(myRequestHook)
+registerResponseHook(myResponseHook)
+
+// Clear all hooks
+clearHooks()
+```
+
+### Environment Variables
+
+- `MCP_REMOTE_NOFIX=1`: Disable the built-in OAuth URL fixer hook
+
+### Use Cases
+
+- **Custom OAuth Providers**: Fix provider-specific URL patterns
+- **Corporate Networks**: Handle internal authentication flows
+- **Custom Logging**: Implement domain-specific request/response logging
+- **URL Rewriting**: Redirect requests through proxies or gateways
+
 ## Debugging
 
 ### Debug Logs
