@@ -5,4 +5,5 @@ dist
 t.*
 cacert.pem
 log
+log[1-9]
 package-lock.json

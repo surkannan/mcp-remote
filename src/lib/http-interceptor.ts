@@ -27,6 +27,7 @@ export interface HttpResponseContext extends HttpRequestContext {
   status: number
   statusText: string
   responseHeaders: Record<string, string>
+  durationMs: number
 }
 
 export type RequestHook = (context: HttpRequestContext) => string | null
@@ -244,10 +245,11 @@ export const defaultOAuthUrlFixer: RequestHook = (context) => {
 export const defaultResponseLogger: ResponseHook = (context) => {
   if (!DEBUG) return
 
-  const { url, method, status, statusText, responseHeaders } = context
+  const { url, method, status, statusText, responseHeaders, durationMs } = context
 
   debugLog(`[HTTP-Request] ${method} ${url}`)
   debugLog(`[Response-Status] ${status} ${statusText}`)
+  debugLog(`[Response-Time] ${durationMs}ms`)
 
   if (Object.keys(responseHeaders).length > 0) {
     debugLog(`[Response-Headers] ${JSON.stringify(responseHeaders)}`)
@@ -344,7 +346,9 @@ function installHttpInterceptor(): void {
     }
 
     try {
+      const startMs = Date.now()
       const response = await originalFetch(actualInput, init)
+      const durationMs = Date.now() - startMs
 
       // Parse response headers
       const responseHeaders: Record<string, string> = {}
@@ -360,6 +364,7 @@ function installHttpInterceptor(): void {
         status: response.status,
         statusText: response.statusText,
         responseHeaders,
+        durationMs,
       }
 
       // Apply response hooks
