@@ -32,10 +32,12 @@ export interface HttpResponseContext extends HttpRequestContext {
 
 export type RequestHook = (context: HttpRequestContext) => string | null
 export type ResponseHook = (context: HttpResponseContext) => void
+export type ResponseTransformHook = (context: HttpResponseContext) => Response | null
 
 // Hook registries
 const requestHooks: RequestHook[] = []
 const responseHooks: ResponseHook[] = []
+const responseTransformHooks: ResponseTransformHook[] = []
 
 /**
  * Sets the original server URL for context in hooks
@@ -64,11 +66,21 @@ export function registerResponseHook(hook: ResponseHook): void {
 }
 
 /**
+ * Register a response transform hook that can replace the Response
+ * @param hook Function that receives response context and returns a new Response or null
+ */
+export function registerResponseTransformHook(hook: ResponseTransformHook): void {
+  responseTransformHooks.push(hook)
+  debugLog(`[HTTP-Interceptor] Registered response transform hook (${responseTransformHooks.length} total)`)
+}
+
+/**
  * Clear all registered hooks
  */
 export function clearHooks(): void {
   requestHooks.length = 0
   responseHooks.length = 0
+  responseTransformHooks.length = 0
   debugLog(`[HTTP-Interceptor] Cleared all hooks`)
 }
 
@@ -140,6 +152,41 @@ function applyResponseHooks(context: HttpResponseContext): void {
       debugLog(`[Hook] Error in response hook: ${error}`)
     }
   }
+}
+
+/**
+ * Apply response transform hooks which can replace the Response object
+ */
+function applyResponseTransformHooks(context: HttpResponseContext): HttpResponseContext {
+  let current = context
+
+  for (const hook of responseTransformHooks) {
+    try {
+      const maybe = hook(current)
+      if (maybe && maybe !== current.response) {
+        // Recompute headers for the transformed response (with redaction)
+        const transformedHeaders: Record<string, string> = {}
+        maybe.headers.forEach((value, key) => {
+          transformedHeaders[key] =
+            key.toLowerCase() === 'set-cookie' || key.toLowerCase() === 'authorization' ? '[REDACTED]' : value
+        })
+
+        debugLog(`[Hook] Response transformed: status ${current.status} -> ${maybe.status}`)
+
+        current = {
+          ...current,
+          response: maybe,
+          status: maybe.status,
+          statusText: maybe.statusText,
+          responseHeaders: transformedHeaders,
+        }
+      }
+    } catch (error) {
+      debugLog(`[Hook] Error in response transform hook: ${error}`)
+    }
+  }
+
+  return current
 }
 
 /**
@@ -282,6 +329,29 @@ export const defaultResponseLogger: ResponseHook = (context) => {
 }
 
 /**
+ * Built-in response transform: 405 -> 404
+ */
+export const default405To404Transform: ResponseTransformHook = (ctx) => {
+  if (ctx.status === 405) {
+    return new Response(ctx.response.body, {
+      status: 404,
+      statusText: 'Not Found',
+      headers: ctx.response.headers,
+    })
+  }
+  return null
+}
+
+/**
+ * Installs the 405->404 response transform
+ */
+export function install405To404Transform(): void {
+  registerResponseTransformHook(default405To404Transform)
+  // Ensure the interceptor is installed so the transform runs
+  installHttpInterceptor()
+}
+
+/**
  * Installs the HTTP interceptor with default OAuth URL fixing (always active)
  */
 export function installOAuthUrlFixer(): void {
@@ -367,10 +437,13 @@ function installHttpInterceptor(): void {
         durationMs,
       }
 
-      // Apply response hooks
-      applyResponseHooks(responseContext)
+      // Apply response transforms first, then logging/processing hooks
+      const finalResponseContext = applyResponseTransformHooks(responseContext)
 
-      return response
+      // Apply response hooks (e.g., logging) on the possibly transformed response
+      applyResponseHooks(finalResponseContext)
+
+      return finalResponseContext.response
     } catch (error) {
       log(`[HTTP-Error] ${error instanceof Error ? error.message : String(error)}`)
       throw error

@@ -24,7 +24,12 @@ import {
 } from './lib/utils'
 import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
 import { createLazyAuthCoordinator } from './lib/coordination'
-import { installHttpDebugLogger as installHttpLogger, installOAuthUrlFixer, setOriginalServerUrl } from './lib/http-interceptor'
+import {
+  installHttpDebugLogger as installHttpLogger,
+  installOAuthUrlFixer,
+  setOriginalServerUrl,
+  install405To404Transform,
+} from './lib/http-interceptor'
 
 /**
  * Main function to run the client
@@ -43,6 +48,9 @@ async function runClient(
 
   // Always install OAuth URL fixer
   installOAuthUrlFixer()
+
+  // Install built-in response transform: 405 -> 404
+  install405To404Transform()
 
   // Install HTTP logger if DEBUG is enabled
   installHttpLogger()

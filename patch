@@ -1,0 +1,290 @@
+diff --git a/INTERCEPTOR.md b/INTERCEPTOR.md
+index 7ec5740..3d274ff 100644
+--- a/INTERCEPTOR.md
++++ b/INTERCEPTOR.md
+@@ -1,8 +1,9 @@
+ # HTTP Interceptor and Hooks
+ 
+-This project ships an HTTP fetch interceptor with a small, composable hooks system for request URL rewriting and response processing/logging.
++This project ships an HTTP fetch interceptor with a small, composable hooks system for request URL rewriting, response transformation, and response processing/logging.
+ 
+ Relevant files:
++
+ - `src/lib/http-interceptor.ts`
+ - `src/client.ts` (example of how it’s installed)
+ - `src/lib/utils.ts` (logging utilities: `DEBUG`, `log`, `debugLog`)
+@@ -11,10 +12,11 @@ Relevant files:
+ 
+ - Replaces `global.fetch` once and applies:
+   - Request hooks: can rewrite the outgoing URL before the fetch executes.
++  - Response transform hooks: can replace/modify the Response before processing/logging.
+   - Response hooks: can log/process the response after it returns.
+ - Provides built-in hooks:
+   - `defaultOAuthUrlFixer` (request): fixes common malformed OAuth discovery/registration URLs.
+-  - `defaultResponseLogger` (response): structured HTTP/OAuth logging (when debug is enabled).
++  - `defaultResponseLogger` (response): structured HTTP/OAuth logging, including response time in ms (when debug is enabled).
+ - Redacts sensitive headers in logs (`authorization`, `set-cookie`).
+ 
+ ## Quick start
+@@ -45,6 +47,7 @@ Notes:
+ ## Hooks API
+ 
+ - Request hook signature:
++
+   ```ts
+   type RequestHook = (ctx: HttpRequestContext) => string | null
+   // Return a new URL string to rewrite the request, or null to leave unchanged.
+@@ -52,16 +55,25 @@ Notes:
+   Context: `url`, `method`, `headers` (Authorization redacted), `originalServerUrl`, `isOAuthRelated`.
+ 
+ - Response hook signature:
++
+   ```ts
+   type ResponseHook = (ctx: HttpResponseContext) => void
+   ```
+   Context includes the request fields plus: `response`, `status`, `statusText`, `responseHeaders` (Set-Cookie/Authorization redacted).
+ 
++- Response transform hook signature:
++
++  ```ts
++  type ResponseTransformHook = (ctx: HttpResponseContext) => Response | null
++  // Return a new Response to replace the original, or null to leave unchanged.
++  ```
++
+ - Managing hooks:
+   - `registerRequestHook(hook)`
+   - `registerResponseHook(hook)`
++  - `registerResponseTransformHook(hook)`
+   - `clearHooks()` to remove all hooks
+-  - Order matters; request hooks see the URL after prior hooks.
++  - Order matters; request hooks see the URL after prior hooks; response transforms run before response hooks.
+ 
+ ## Built-in hooks
+ 
+@@ -74,17 +86,18 @@ Notes:
+   - Requires `setOriginalServerUrl(serverUrl)` for context.
+ 
+ - `defaultResponseLogger` (response)
+-  - Logs method, URL, status, headers, and OAuth query params when relevant, only if `DEBUG` is true.
++  - Logs method, URL, status, response time (ms), headers, and OAuth query params when relevant, only if `DEBUG` is true.
+   - Source: `src/lib/http-interceptor.ts`:
+ 
+ ```ts
+ export const defaultResponseLogger: ResponseHook = (context) => {
+   if (!DEBUG) return
+ 
+-  const { url, method, status, statusText, responseHeaders } = context
++  const { url, method, status, statusText, responseHeaders, durationMs } = context
+ 
+   debugLog(`[HTTP-Request] ${method} ${url}`)
+   debugLog(`[Response-Status] ${status} ${statusText}`)
++  debugLog(`[Response-Time] ${durationMs}ms`)
+ 
+   if (Object.keys(responseHeaders).length > 0) {
+     debugLog(`[Response-Headers] ${JSON.stringify(responseHeaders)}`)
+@@ -120,6 +133,7 @@ export const defaultResponseLogger: ResponseHook = (context) => {
+ ## Add your own hooks
+ 
+ - Request URL rewrite (example):
++
+ ```ts
+ import { registerRequestHook } from './src/lib/http-interceptor'
+ 
+@@ -135,6 +149,7 @@ registerRequestHook((ctx) => {
+ ```
+ 
+ - Response metrics/logging (example):
++
+ ```ts
+ import { registerResponseHook } from './src/lib/http-interceptor'
+ import { debugLog } from './src/lib/utils'
+@@ -144,6 +159,23 @@ registerResponseHook((ctx) => {
+ })
+ ```
+ 
++- Response transform (example: 405 → 404):
++
++```ts
++import { registerResponseTransformHook } from './src/lib/http-interceptor'
++
++registerResponseTransformHook((ctx) => {
++  if (ctx.status === 405) {
++    return new Response(ctx.response.body, {
++      status: 404,
++      statusText: 'Not Found',
++      headers: ctx.response.headers,
++    })
++  }
++  return null
++})
++```
++
+ Tip: If you want both default logging and your custom response hook, call `installHttpDebugLogger()` first (so the default logger auto-registers), then `registerResponseHook(...)` for yours.
+ 
+ ## Effective logging
+@@ -163,7 +195,7 @@ Tip: If you want both default logging and your custom response hook, call `insta
+ ## Uninstalling and cleanup
+ 
+ - `uninstallHttpInterceptor()` restores the original `fetch`.
+-- `clearHooks()` empties both request and response hook registries.
++- `clearHooks()` empties request, response, and response transform hook registries.
+ 
+ ## Gotchas
+ 
+diff --git a/src/client.ts b/src/client.ts
+index 6f6292d..87cc23a 100644
+--- a/src/client.ts
++++ b/src/client.ts
+@@ -24,7 +24,12 @@ import {
+ } from './lib/utils'
+ import { StaticOAuthClientInformationFull, StaticOAuthClientMetadata } from './lib/types'
+ import { createLazyAuthCoordinator } from './lib/coordination'
+-import { installHttpDebugLogger as installHttpLogger, installOAuthUrlFixer, setOriginalServerUrl } from './lib/http-interceptor'
++import {
++  installHttpDebugLogger as installHttpLogger,
++  installOAuthUrlFixer,
++  setOriginalServerUrl,
++  install405To404Transform,
++} from './lib/http-interceptor'
+ 
+ /**
+  * Main function to run the client
+@@ -44,6 +49,9 @@ async function runClient(
+   // Always install OAuth URL fixer
+   installOAuthUrlFixer()
+ 
++  // Install built-in response transform: 405 -> 404
++  install405To404Transform()
++
+   // Install HTTP logger if DEBUG is enabled
+   installHttpLogger()
+ 
+diff --git a/src/lib/http-interceptor.ts b/src/lib/http-interceptor.ts
+index 42e723b..c92f7fb 100644
+--- a/src/lib/http-interceptor.ts
++++ b/src/lib/http-interceptor.ts
+@@ -32,10 +32,12 @@ export interface HttpResponseContext extends HttpRequestContext {
+ 
+ export type RequestHook = (context: HttpRequestContext) => string | null
+ export type ResponseHook = (context: HttpResponseContext) => void
++export type ResponseTransformHook = (context: HttpResponseContext) => Response | null
+ 
+ // Hook registries
+ const requestHooks: RequestHook[] = []
+ const responseHooks: ResponseHook[] = []
++const responseTransformHooks: ResponseTransformHook[] = []
+ 
+ /**
+  * Sets the original server URL for context in hooks
+@@ -63,12 +65,22 @@ export function registerResponseHook(hook: ResponseHook): void {
+   debugLog(`[HTTP-Interceptor] Registered response hook (${responseHooks.length} total)`)
+ }
+ 
++/**
++ * Register a response transform hook that can replace the Response
++ * @param hook Function that receives response context and returns a new Response or null
++ */
++export function registerResponseTransformHook(hook: ResponseTransformHook): void {
++  responseTransformHooks.push(hook)
++  debugLog(`[HTTP-Interceptor] Registered response transform hook (${responseTransformHooks.length} total)`)
++}
++
+ /**
+  * Clear all registered hooks
+  */
+ export function clearHooks(): void {
+   requestHooks.length = 0
+   responseHooks.length = 0
++  responseTransformHooks.length = 0
+   debugLog(`[HTTP-Interceptor] Cleared all hooks`)
+ }
+ 
+@@ -142,6 +154,41 @@ function applyResponseHooks(context: HttpResponseContext): void {
+   }
+ }
+ 
++/**
++ * Apply response transform hooks which can replace the Response object
++ */
++function applyResponseTransformHooks(context: HttpResponseContext): HttpResponseContext {
++  let current = context
++
++  for (const hook of responseTransformHooks) {
++    try {
++      const maybe = hook(current)
++      if (maybe && maybe !== current.response) {
++        // Recompute headers for the transformed response (with redaction)
++        const transformedHeaders: Record<string, string> = {}
++        maybe.headers.forEach((value, key) => {
++          transformedHeaders[key] =
++            key.toLowerCase() === 'set-cookie' || key.toLowerCase() === 'authorization' ? '[REDACTED]' : value
++        })
++
++        debugLog(`[Hook] Response transformed: status ${current.status} -> ${maybe.status}`)
++
++        current = {
++          ...current,
++          response: maybe,
++          status: maybe.status,
++          statusText: maybe.statusText,
++          responseHeaders: transformedHeaders,
++        }
++      }
++    } catch (error) {
++      debugLog(`[Hook] Error in response transform hook: ${error}`)
++    }
++  }
++
++  return current
++}
++
+ /**
+  * Built-in OAuth URL fixer hook
+  * This replaces the hardcoded fixOAuthUrl function with a hookable implementation
+@@ -281,6 +328,29 @@ export const defaultResponseLogger: ResponseHook = (context) => {
+   }
+ }
+ 
++/**
++ * Built-in response transform: 405 -> 404
++ */
++export const default405To404Transform: ResponseTransformHook = (ctx) => {
++  if (ctx.status === 405) {
++    return new Response(ctx.response.body, {
++      status: 404,
++      statusText: 'Not Found',
++      headers: ctx.response.headers,
++    })
++  }
++  return null
++}
++
++/**
++ * Installs the 405->404 response transform
++ */
++export function install405To404Transform(): void {
++  registerResponseTransformHook(default405To404Transform)
++  // Ensure the interceptor is installed so the transform runs
++  installHttpInterceptor()
++}
++
+ /**
+  * Installs the HTTP interceptor with default OAuth URL fixing (always active)
+  */
+@@ -367,10 +437,13 @@ function installHttpInterceptor(): void {
+         durationMs,
+       }
+ 
+-      // Apply response hooks
+-      applyResponseHooks(responseContext)
++      // Apply response transforms first, then logging/processing hooks
++      const finalResponseContext = applyResponseTransformHooks(responseContext)
++
++      // Apply response hooks (e.g., logging) on the possibly transformed response
++      applyResponseHooks(finalResponseContext)
+ 
+-      return response
++      return finalResponseContext.response
+     } catch (error) {
+       log(`[HTTP-Error] ${error instanceof Error ? error.message : String(error)}`)
+       throw error
