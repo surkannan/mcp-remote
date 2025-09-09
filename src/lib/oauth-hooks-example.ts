@@ -5,7 +5,7 @@
  * instead of hardcoded patches in http-interceptor.ts
  */
 
-import { registerRequestHook, registerResponseHook, type HttpRequestContext, type HttpResponseContext } from './http-interceptor.js'
+import { registerRequestHook, registerResponseHook, type HttpRequestContext, type HttpResponseContext } from './http'
 
 /**
  * Example custom OAuth URL fixer hook
